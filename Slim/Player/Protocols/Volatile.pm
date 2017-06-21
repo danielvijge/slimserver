@@ -12,6 +12,7 @@ use strict;
 
 use Slim::Music::Artwork;
 use Slim::Utils::Log;
+use Slim::Utils::Strings qw(cstring);
 use base qw(Slim::Player::Protocols::File);
 
 sub isRemote { 1 }
@@ -33,6 +34,10 @@ sub getMetadataFor {
 	
 	if ( ! ($track->title && $track->artistName && $track->duration) ) {
 		my $attributes = Slim::Formats->readTags( $path );
+		
+		# make sure we have a value for artist, or we'll end up scanning the file over and over again
+		$attributes->{ARTIST} = cstring($client, 'NO_ARTIST') unless defined $attributes->{ARTIST};
+		
 		$track->setAttributes($attributes) if $attributes && keys %$attributes;
 		
 		$class->getArtwork($track, $path)

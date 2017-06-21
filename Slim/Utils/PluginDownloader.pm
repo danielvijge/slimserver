@@ -214,7 +214,7 @@ sub _downloadError {
 
 	$downloading--;
 
-	$log->warn("unable to download $name from $url - $error");
+	$log->error("unable to download $name from $url - $error");
 }
 
 sub downloading {
@@ -244,10 +244,7 @@ sub checkForUpdates {
 
 	$request->addParam(args => {
 		type => 'plugin',
-		targetPlat => Slim::Utils::OSDetect::OS(),
-		targetVers => $::VERSION,
-		current    => $current,
-		lang       => $Slim::Utils::Strings::currentLang,
+		current => $current,
 	});
 
 	for my $plugin (keys %$plugins) {

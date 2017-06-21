@@ -60,7 +60,7 @@ my $prefs = preferences('server');
 my $cache = {};
 
 # small, short lived cache of folder entries to prevent repeated disk reads on BMF
-tie my %bmfCache, 'Tie::Cache::LRU::Expires', EXPIRES => 15, ENTRIES => 5;
+tie my %bmfCache, 'Tie::Cache::LRU::Expires', EXPIRES => 60, ENTRIES => $prefs->get('dbhighmem') ? 1024 : 5;
 
 sub init {
 	my $class = shift;
@@ -1029,6 +1029,10 @@ sub artistsQuery {
 		my $total_sth = $dbh->prepare_cached( qq{
 			SELECT COUNT(1) FROM ( $sql ) AS t1
 		} );
+				
+		if ( main::DEBUGLOG && $sqllog->is_debug ) {
+			$sqllog->debug( "Artists totals query: $sql / " . Data::Dump::dump($p) );
+		}
 		
 		$total_sth->execute( @{$p} );
 		($count) = $total_sth->fetchrow_array();
@@ -1904,12 +1908,24 @@ sub mediafolderQuery {
 	} @{ Slim::Utils::Misc::getInactiveMediaDirs() } if !$type || $type eq 'audio';
 	
 	my ($topLevelObj, $items, $count, $topPath, $realName);
+	
+	my $bmfUrlForName = $cache->{bmfUrlForName} || {};
+	
+	my $highmem = $prefs->get('dbhighmem');
 				
 	my $filter = sub {
 		# if a $sth is passed, we'll do a quick lookup to check existence only, not returning an actual object if possible
 		my ($filename, $topPath, $sth) = @_;
-		
-		my $url = Slim::Utils::Misc::fixPath($filename, $topPath) || '';
+
+		my $url = $bmfUrlForName->{$filename . $topPath};
+		if (!$url) {
+			$url ||= Slim::Utils::Misc::fixPath($filename, $topPath) || '';
+			
+			# keep a cache of the mapping in memory if we can afford it
+			if ($highmem && $url) {
+				$bmfUrlForName->{$filename . $topPath} ||= $url;
+			}
+		}
 
 		# Amazingly, this just works. :)
 		# Do the cheap compare for osName first - so non-windows users
@@ -1938,7 +1954,8 @@ sub mediafolderQuery {
 		
 		$url =~ s/^file/tmp/ if $volatileUrl;
 
-		my $item = Slim::Schema->objectForUrl({
+		# if we have dbhighmem configured, use a memory cache to prevent slow lookups
+		my $item = $bmfCache{$url} || Slim::Schema->objectForUrl({
 			'url'      => $url,
 			'create'   => 1,
 			'readTags' => 1,
@@ -1946,6 +1963,10 @@ sub mediafolderQuery {
 		}) if $url;
 
 		if ( (blessed($item) && $item->can('content_type')) || ($params->{typeRegEx} && $filename =~ $params->{typeRegEx}) ) {
+
+			if ($highmem) {
+				$bmfCache{$url} = $item;
+			}
 
 			# when dealing with a volatile file, read tags, as above objectForUrl() would not scan remote files
 			if ( $volatileUrl ) {
@@ -2048,7 +2069,7 @@ sub mediafolderQuery {
 				items       => $items,
 				topLevelObj => $topLevelObj,
 				count       => $count,
-			} if scalar @$items > 100 && ($params->{url} || $params->{id});
+			} if scalar @$items > 10 && ($params->{url} || $params->{id});
 		}
 
 		if ($want_top) {
@@ -2165,6 +2186,11 @@ sub mediafolderQuery {
 			$tags =~ /u/ && $request->addResultLoop($loopname, $chunkCount, 'url', $url);
 			$tags =~ /t/ && $request->addResultLoop($loopname, $chunkCount, 'title', $realName);
 
+			# XXX - This is not in line with other queries requesting the content type, 
+			#       where the latter would be returned as the "type" value. But I don't
+			#       want to break backwards compatibility, therefore returning 'ct' instead.
+			$tags =~ /o/ && $request->addResultLoop($loopname, $chunkCount, 'ct', $item->content_type);
+
 			$chunkCount++;
 		}
 		
@@ -2181,6 +2207,15 @@ sub mediafolderQuery {
 		# the caches would get out of sync
 		Slim::Schema->wipeCaches;
 		Slim::Music::Import->setLastScanTime();
+	}
+	
+	if ( $highmem ) {
+		# don't grow infinitely - reset after 512 entries
+		if ( scalar keys %$bmfUrlForName > 512 ) {
+			$bmfUrlForName = {};
+		}
+		
+		$cache->{bmfUrlForName} = $bmfUrlForName;
 	}
 	
 	$request->setStatusDone();
@@ -2300,51 +2335,74 @@ sub playersQuery {
 	$request->addResult('count', $count);
 
 	if ($valid) {
-		my $idx = $start;
-		my $cnt = 0;
-		my @players = Slim::Player::Client::clients();
-
-		if (scalar(@players) > 0) {
-
-			for my $eachclient (@players[$start..$end]) {
-				$request->addResultLoop('players_loop', $cnt, 
-					'playerindex', $idx);
-				$request->addResultLoop('players_loop', $cnt, 
-					'playerid', $eachclient->id());
-                                $request->addResultLoop('players_loop', $cnt,
-                                        'uuid', $eachclient->uuid());
-				$request->addResultLoop('players_loop', $cnt, 
-					'ip', $eachclient->ipport());
-				$request->addResultLoop('players_loop', $cnt, 
-					'name', $eachclient->name());
-				$request->addResultLoop('players_loop', $cnt, 
-					'model', $eachclient->model(1));
-				$request->addResultLoop('players_loop', $cnt, 
-					'isplayer', $eachclient->isPlayer());
-				$request->addResultLoop('players_loop', $cnt, 
-					'displaytype', $eachclient->vfdmodel())
-					unless ($eachclient->model() eq 'http');
-				$request->addResultLoop('players_loop', $cnt, 
-					'canpoweroff', $eachclient->canPowerOff());
-				$request->addResultLoop('players_loop', $cnt, 
-					'connected', ($eachclient->connected() || 0));
-
-				for my $pref (@prefs) {
-					if (defined(my $value = $prefs->client($eachclient)->get($pref))) {
-						$request->addResultLoop('players_loop', $cnt, 
-							$pref, $value);
-					}
-				}
-					
-				$idx++;
-				$cnt++;
-			}	
-		}
+		_addPlayersLoop($request, $start, $end, \@prefs);
 	}
 	
 	$request->setStatusDone();
 }
 
+sub _addPlayersLoop {
+	my ($request, $start, $end, $savePrefs) = @_;
+	
+	my $idx = $start;
+	my $cnt = 0;
+	my @players = Slim::Player::Client::clients();
+
+	if (scalar(@players) > 0) {
+
+		for my $eachclient (@players[$start..$end]) {
+			$request->addResultLoop('players_loop', $cnt, 
+				'playerindex', $idx);
+ 			$request->addResultLoop('players_loop', $cnt, 
+				'playerid', $eachclient->id());
+			$request->addResultLoop('players_loop', $cnt,
+				'uuid', $eachclient->uuid());
+			$request->addResultLoop('players_loop', $cnt, 
+				'ip', $eachclient->ipport());
+			$request->addResultLoop('players_loop', $cnt, 
+				'name', $eachclient->name());
+			if (defined $eachclient->sequenceNumber()) {
+				$request->addResultLoop('players_loop', $cnt,
+					'seq_no', $eachclient->sequenceNumber());
+			}
+			$request->addResultLoop('players_loop', $cnt, 
+				'model', $eachclient->model(1));
+			$request->addResultLoop('players_loop', $cnt, 
+				'modelname', $eachclient->modelName());
+			$request->addResultLoop('players_loop', $cnt, 
+				'power', $eachclient->power() ? 1 : 0);
+			$request->addResultLoop('players_loop', $cnt, 
+				'isplaying', $eachclient->isPlaying() ? 1 : 0);
+			$request->addResultLoop('players_loop', $cnt, 
+				'displaytype', $eachclient->vfdmodel())
+				unless ($eachclient->model() eq 'http');
+			$request->addResultLoop('players_loop', $cnt, 
+				'isplayer', $eachclient->isPlayer() || 0);
+			$request->addResultLoop('players_loop', $cnt, 
+				'canpoweroff', $eachclient->canPowerOff());
+			$request->addResultLoop('players_loop', $cnt, 
+				'connected', ($eachclient->connected() || 0));
+			$request->addResultLoop('players_loop', $cnt,
+				'firmware', $eachclient->revision());
+			$request->addResultLoop('players_loop', $cnt, 
+				'player_needs_upgrade', 1)
+				if ($eachclient->needsUpgrade());
+			$request->addResultLoop('players_loop', $cnt,
+				'player_is_upgrading', 1)
+				if ($eachclient->isUpgrading());
+
+			for my $pref (@$savePrefs) {
+				if (defined(my $value = $prefs->client($eachclient)->get($pref))) {
+					$request->addResultLoop('players_loop', $cnt, 
+						$pref, $value);
+				}
+			}
+				
+			$idx++;
+			$cnt++;
+		}	
+	}
+}
 
 sub playlistPlaylistsinfoQuery {
 	my $request = shift;
@@ -3171,6 +3229,10 @@ sub serverstatusQuery {
 
 	# add server_uuid
 	$request->addResult('uuid', $prefs->get('server_uuid'));
+	
+	if ( my $mac = Slim::Utils::OSDetect->getOS()->getMACAddress() ) {
+		$request->addResult('mac', $mac);
+	}
 
 	if (Slim::Schema::hasLibrary()) {
 		# add totals
@@ -3217,58 +3279,7 @@ sub serverstatusQuery {
 	my ($valid, $start, $end) = $request->normalize(scalar($index), scalar($quantity), $count);
 
 	if ($valid) {
-
-		my $cnt = 0;
-		my @players = Slim::Player::Client::clients();
-
-		if (scalar(@players) > 0) {
-
-			for my $eachclient (@players[$start..$end]) {
-				$request->addResultLoop('players_loop', $cnt, 
-					'playerid', $eachclient->id());
-				$request->addResultLoop('players_loop', $cnt,
-					'uuid', $eachclient->uuid());
-				$request->addResultLoop('players_loop', $cnt, 
-					'ip', $eachclient->ipport());
-				$request->addResultLoop('players_loop', $cnt, 
-					'name', $eachclient->name());
-				if (defined $eachclient->sequenceNumber()) {
-					$request->addResultLoop('players_loop', $cnt,
-						'seq_no', $eachclient->sequenceNumber());
-				}
-				$request->addResultLoop('players_loop', $cnt,
-					'model', $eachclient->model(1));
-				$request->addResultLoop('players_loop', $cnt, 
-					'power', $eachclient->power());
-				$request->addResultLoop('players_loop', $cnt, 
-					'isplaying', $eachclient->isPlaying() ? 1 : 0);
-				$request->addResultLoop('players_loop', $cnt, 
-					'displaytype', $eachclient->vfdmodel())
-					unless ($eachclient->model() eq 'http');
-				$request->addResultLoop('players_loop', $cnt, 
-					'canpoweroff', $eachclient->canPowerOff());
-				$request->addResultLoop('players_loop', $cnt, 
-					'connected', ($eachclient->connected() || 0));
-				$request->addResultLoop('players_loop', $cnt, 
-					'isplayer', ($eachclient->isPlayer() || 0));
-				$request->addResultLoop('players_loop', $cnt, 
-					'player_needs_upgrade', "1")
-					if ($eachclient->needsUpgrade());
-				$request->addResultLoop('players_loop', $cnt,
-					'player_is_upgrading', "1")
-					if ($eachclient->isUpgrading());
-
-				for my $pref (@{$savePrefs{'player'}}) {
-					if (defined(my $value = $prefs->client($eachclient)->get($pref))) {
-						$request->addResultLoop('players_loop', $cnt, 
-							$pref, $value);
-					}
-				}
-					
-				$cnt++;
-			}
-		}
-
+		_addPlayersLoop($request, $start, $end, $savePrefs{'player'});
 	}
 
 	if (!main::NOMYSB) {
@@ -3779,7 +3790,7 @@ sub statusQuery {
 	
 		main::DEBUGLOG && $isDebug && $log->debug("statusQuery(): setup non-zero player response");
 		# get the other parameters
-		my $tags     = $request->getParam('tags');
+		my $tags     = $request->getParam('tags') || '';
 		my $index    = $request->getParam('_index');
 		my $quantity = $request->getParam('_quantity');
 		
@@ -4826,6 +4837,11 @@ sub _songDataFromHash {
 		
 		# Special case for A/S which return multiple keys
 		if ( $tag eq 'A' ) {
+			# if we don't have an explicit track artist defined, we're going to assume the track's artist was the track artist
+			if ( $res->{artist} && $res->{albumartist} && $res->{artist} ne $res->{albumartist}) {
+				$res->{trackartist} ||= $res->{artist};
+			}
+
 			for my $role ( @contributorRoles ) {
 				$role = lc $role;
 				if ( defined $res->{$role} ) {
@@ -5327,7 +5343,7 @@ sub _getTagDataForTracks {
 	};
 	
 	my $join_tracks_persistent = sub {
-		if ( main::STATISTICS ) {
+		if ( main::STATISTICS && $sql !~ /JOIN tracks_persistent/ ) {
 			$sql .= 'JOIN tracks_persistent ON tracks_persistent.urlmd5 = tracks.urlmd5 ';
 		}
 	};

@@ -1,6 +1,9 @@
 package Slim::Plugin::InternetRadio::TuneIn::Metadata;
 
-# $Id$
+# Logitech Media Server Copyright 2001-2013 Logitech.
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License, 
+# version 2.
 
 use strict;
 
@@ -12,6 +15,7 @@ use Slim::Plugin::InternetRadio::TuneIn;
 use Slim::Utils::Cache;
 use Slim::Utils::Log;
 use Slim::Utils::Prefs;
+use Slim::Utils::Strings qw(string cstring);
 
 use URI::Escape qw(uri_escape_utf8);
 
@@ -94,7 +98,7 @@ sub defaultMeta {
 		title => Slim::Music::Info::getCurrentTitle($url),
 		icon  => ICON,
 		cover => ICON,
-		type  => $client->string('RADIO'),
+		type  => cstring($client, 'RADIO'),
 	};
 }
 
@@ -159,6 +163,8 @@ sub parser {
 sub provider {
 	my ( $client, $url ) = @_;
 	
+	return defaultMeta(undef, $url) unless $client;
+	
 	$client = $client->master;
 	
 	my $hasIcy = $client->pluginData('hasIcy');
@@ -184,7 +190,11 @@ sub provider {
 		}
 	}
 	
-	if ( !$client->pluginData('fetchingMeta') ) {
+	# Sometimes when a slimservice instances on MySB/UESR is stopped, we might end up
+	# with fetchingMeta not being reset. As pluginData is persisted in the database,
+	# this would cause a player to never display artwork again. Let's therefore add a
+	# timestamp rather than a simple flag, and ignore the timestamp, when it's old.
+	if ( !$client->pluginData('fetchingMeta') || $client->pluginData('fetchingMeta') < (time() - 3600) ) {
 		# Fetch metadata in the background
 		Slim::Utils::Timers::killTimers( $client, \&fetchMetadata );
 		fetchMetadata( $client, $url );
@@ -229,7 +239,7 @@ sub fetchMetadata {
 		},
 	);
 	
-	$client->pluginData( fetchingMeta => 1 );
+	$client->pluginData( fetchingMeta => time() );
 	
 	$http->get( $metaUrl );
 }

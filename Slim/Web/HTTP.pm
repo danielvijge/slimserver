@@ -1002,7 +1002,7 @@ sub generateHTTPResponse {
 	}
 
 	# XXX - this is no longer being used by any of the stock skins
-	if ($contentType =~ /text/ && $contentType !~ /(?:css|javascript)/ && $path !~ /(?:json|memoryusage|html\/js-)/) {
+	if ($contentType =~ /text/ && $contentType !~ /(?:css|javascript)/ && $path !~ /(?:json|memoryusage)/) {
 
 		$params->{'params'} = {};
 
@@ -2629,7 +2629,10 @@ sub downloadMusicFile {
 		my $isHead = $response->request->method eq 'HEAD';
 		
 		if ( my ($outFormat) = $uri =~ m{download\.([^\?]+)} ) {				
-			$outFormat = 'flc' if $outFormat eq 'flac';
+			# if the file extension itself is no valid content type, try to figure it out
+			if ( !Slim::Music::Info::isSong(undef, $outFormat) ) {
+				$outFormat = Slim::Music::Info::typeFromSuffix($uri);
+			}
 			
 			if ( $obj->content_type ne $outFormat ) {
 				if ( main::TRANSCODING ) {

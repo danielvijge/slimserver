@@ -63,82 +63,85 @@ $ENV{PERL5LIB} = join $Config{path_sep}, grep { !$check_inc{$_}++ } @INC;
 
 # This package section is used for the windows service version of the application, 
 # as built with ActiveState's PerlSvc
-package PerlSvc;
-
-our %Config = (
-	DisplayName => 'Logitech Media Server',
-	Description => "Logitech Media Server - streaming media server",
-	ServiceName => "squeezesvc",
-	StartNow    => 0,
-);
-
-sub Startup {
-	# Tell PerlSvc to bundle these modules
-	if (0) {
-		require 'auto/Compress/Raw/Zlib/autosplit.ix';
-		require Cache::FileCache;
-	}
+if (ISWINDOWS && $PerlSvc::VERSION) {
+	package PerlSvc;
 	
-	# added to workaround a problem with 5.8 and perlsvc.
-	# $SIG{BREAK} = sub {} if RunningAsService();
-	main::initOptions();
-	main::init();
-	
-	# here's where your startup code will go
-	while (ContinueRun() && !main::idle()) { }
-
-	main::stopServer();
-}
-
-sub Install {
-
-	my($Username,$Password);
-
-	use Getopt::Long;
-
-	Getopt::Long::GetOptions(
-		'username=s' => \$Username,
-		'password=s' => \$Password,
+	our %Config = (
+		DisplayName => 'Logitech Media Server',
+		Description => "Logitech Media Server - streaming media server",
+		ServiceName => "squeezesvc",
+		StartNow    => 0,
 	);
-
-	main::initLogging();
-
-	if ((defined $Username) && ((defined $Password) && length($Password) != 0)) {
-		my @infos;
-		my ($host, $user);
-
-		# use the localhost '.' by default, unless user has defined "domain\username"
-		if ($Username =~ /(.+)\\(.+)/) {
-			$host = $1;
-			$user = $2;
+	
+	sub Startup {
+		# Tell PerlSvc to bundle these modules
+		if (0) {
+			require 'auto/Compress/Raw/Zlib/autosplit.ix';
+			require Cache::FileCache;
 		}
-		else {
-			$host = '.';
-			$user = $Username;
+		
+		# added to workaround a problem with 5.8 and perlsvc.
+		# $SIG{BREAK} = sub {} if RunningAsService();
+		main::initOptions();
+		main::init();
+		
+		# here's where your startup code will go
+		while (ContinueRun() && !main::idle()) { }
+	
+		main::stopServer();
+	}
+	
+	sub Install {
+	
+		my($Username,$Password);
+	
+		use Getopt::Long;
+	
+		Getopt::Long::GetOptions(
+			'username=s' => \$Username,
+			'password=s' => \$Password,
+		);
+	
+		main::initLogging();
+	
+		if ((defined $Username) && ((defined $Password) && length($Password) != 0)) {
+			my @infos;
+			my ($host, $user);
+	
+			# use the localhost '.' by default, unless user has defined "domain\username"
+			if ($Username =~ /(.+)\\(.+)/) {
+				$host = $1;
+				$user = $2;
+			}
+			else {
+				$host = '.';
+				$user = $Username;
+			}
+	
+			# configure user to be used to run the server
+			my $grant = PerlSvc::extract_bound_file('grant.exe');
+			if ($host && $user && $grant && !`$grant add SeServiceLogonRight $user`) {
+				$Config{UserName} = "$host\\$user";
+				$Config{Password} = $Password;
+			}
 		}
-
-		# configure user to be used to run the server
-		my $grant = PerlSvc::extract_bound_file('grant.exe');
-		if ($host && $user && $grant && !`$grant add SeServiceLogonRight $user`) {
-			$Config{UserName} = "$host\\$user";
-			$Config{Password} = $Password;
-		}
+	}
+	
+	sub Interactive {
+		main::main();	
+	}
+	
+	sub Remove {
+		# add your additional remove messages or functions here
+		main::initLogging();
+	}
+	
+	sub Help {	
+		main::showUsage();
+		main::initLogging();
 	}
 }
 
-sub Interactive {
-	main::main();	
-}
-
-sub Remove {
-	# add your additional remove messages or functions here
-	main::initLogging();
-}
-
-sub Help {	
-	main::showUsage();
-	main::initLogging();
-}
 
 package main;
 
@@ -316,7 +319,7 @@ our @AUTHORS = (
 
 my $prefs        = preferences('server');
 
-our $VERSION     = '7.9.0';
+our $VERSION     = '7.9.1';
 our $REVISION    = undef;
 our $BUILDDATE   = undef;
 our $httpport    = undef;
@@ -532,7 +535,7 @@ sub init {
 	main::INFOLOG && $log->info("Server Buttons init...");
 	Slim::Buttons::Common::init();
 
-	if ($stdio || ($ENV{LMS_STDIO} && $REVISION eq 'TRUNK')) {
+	if ($stdio || ($ENV{LMS_STDIO} && $REVISION =~ /TRUNK|git-/)) {
 		main::INFOLOG && $log->info("Server Stdio init...");
 		Slim::Control::Stdio::init(\*STDIN, \*STDOUT);
 	}
@@ -596,9 +599,6 @@ sub init {
 	main::INFOLOG && $log->info("Server Jive init...");
 	Slim::Control::Jive->init();
 	
-	main::INFOLOG && $log->info("Remote Metadata init...");
-	Slim::Formats::RemoteMetadata->init();
-	
 	# Reinitialize logging, as plugins may have been added.
 	if (Slim::Utils::Log->needsReInit) {
 
@@ -630,10 +630,7 @@ sub init {
 
 	# pull in the memory usage module if requested.
 	if (main::INFOLOG && logger('server.memory')->is_info) {
-		
-		Slim::bootstrap::tryModuleLoad('Slim::Utils::MemoryUsage');
-
-		if ($@) {
+		if ( Slim::bootstrap::tryModuleLoad('Slim::Utils::MemoryUsage') ) {
 
 			logError("Couldn't load Slim::Utils::MemoryUsage: [$@]");
 

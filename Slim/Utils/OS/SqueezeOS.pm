@@ -48,6 +48,9 @@ sub initDetails {
 	return $class->{osDetails};
 }
 
+# don't bother - we don't support WOL for Touch etc. anyway
+sub getMACAddress {}
+
 sub ignoredItems {
 	my $class = shift;
 	
@@ -315,6 +318,9 @@ sub skipPlugins {
 			iTunes MusicMagic PreventStandby Rescan TT xPL
 			
 			UPnP ImageBrowser
+			
+			ACLFiletest 
+			DnDPlay ExtendedBrowseModes FullTextSearch LibraryDemo
 		),
 		$class->SUPER::skipPlugins(),
 	);

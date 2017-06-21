@@ -1,7 +1,5 @@
 package Slim::Plugin::RhapsodyDirect::Plugin;
 
-# $Id$
-
 # Browse Rhapsody Direct via SqueezeNetwork
 
 use strict;
@@ -26,7 +24,7 @@ sub initPlugin {
 	);
 
 	Slim::Player::ProtocolHandlers->registerIconHandler(
-		qr|squeezenetwork\.com.*/api/rhapsody/|, 
+		qr|mysqueezebox\.com.*/api/rhapsody/|, 
 		sub { Slim::Plugin::RhapsodyDirect::ProtocolHandler->getIcon(); }
 	);
 	
@@ -73,7 +71,7 @@ sub initPlugin {
 					client  => $client,
 					feed    => Slim::Plugin::RhapsodyDirect::ProtocolHandler->trackInfoURL( $client, $url ),
 					path    => 'plugins/rhapsodydirect/trackinfo.html',
-					title   => 'Rhapsody Direct Track Info',
+					title   => 'Napster Direct Track Info',
 					timeout => 35,
 					args    => \@_
 				} );

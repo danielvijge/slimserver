@@ -160,7 +160,7 @@ sub init {
 	# metainformation (and possibly dbix_migration, if the db is in a
 	# wierd state), so that the migrateDB call below will update the schema.
 	if ( $@ ) {
-		logWarning("Creating new database - empty, outdated or invalid database found");
+		main::INFOLOG && $log->is_info && $log->info("Creating new database - empty, outdated or invalid database found");
 
 		eval {
 			$dbh->do('DROP TABLE IF EXISTS metainformation');
@@ -907,7 +907,7 @@ sub _createOrUpdateAlbum {
 	}
 	
 	# If the album does not have a title, use the singleton "No Album" album
-	if ( $create && !$title ) {
+	if ( $create && (!defined $title || $title eq '') ) {
 		# let the external scanner make an attempt to find any existing "No Album" in the 
 		# database before we assume there are none from previous scans
 		if ( !defined $_unknownAlbumId ) {

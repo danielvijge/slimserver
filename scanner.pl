@@ -92,7 +92,7 @@ if ( INFOLOG || DEBUGLOG ) {
 	require Slim::Utils::PerlRunTime;
 }
 
-our $VERSION     = '7.9.0';
+our $VERSION     = '7.9.1';
 our $REVISION    = undef;
 our $BUILDDATE   = undef;
 
@@ -237,10 +237,7 @@ sub main {
 	
 	# pull in the memory usage module if requested.
 	if (main::INFOLOG && logger('server.memory')->is_info) {
-		
-		Slim::bootstrap::tryModuleLoad('Slim::Utils::MemoryUsage');
-
-		if ($@) {
+		if ( Slim::bootstrap::tryModuleLoad('Slim::Utils::MemoryUsage') ) {
 
 			logError("Couldn't load Slim::Utils::MemoryUsage: [$@]");
 

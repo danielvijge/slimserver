@@ -1,7 +1,5 @@
 package Slim::Plugin::Favorites::Plugin;
 
-# $Id$
-
 # A Favorites implementation which stores favorites as opml files and allows
 # the favorites list to be edited from the web interface
 
@@ -9,7 +7,7 @@ package Slim::Plugin::Favorites::Plugin;
 
 # This code is derived from code with the following copyright message:
 #
-# Logitech Media Server Copyright 2005-2011 Logitech.
+# Logitech Media Server Copyright 2005-2016 Logitech.
 # This program is free software; you can redistribute it and/or
 # modify it under the terms of the GNU General Public License,
 # version 2.
@@ -44,12 +42,22 @@ my $log = logger('favorites');
 
 my $prefs = preferences('plugin.favorites');
 
+# make sure the value is defined, otherwise it would be enabled again
+$prefs->setChange( sub {
+	$prefs->set($_[0], 0) unless defined $_[1];
+}, 'registerDSTM' );
+
+
 # support multiple edditing sessions at once - indexed by sessionId.  [Default to favorites editting]
 my $nextSession = 2; # session id 1 = favorites
 tie my %sessions, 'Tie::Cache::LRU', 4;
 
 sub initPlugin {
 	my $class = shift;
+
+	$prefs->init({
+		registerDSTM => 1,
+	});
 
 	$class->SUPER::initPlugin(@_);
 	
@@ -98,6 +106,40 @@ sub initPlugin {
 		after => 'playitem',
 		func  => \&playlistInfoHandler,
 	) );
+}
+
+sub postinitPlugin {
+	# if user has the Don't Stop The Music plugin enabled, register ourselves
+	if ( Slim::Utils::PluginManager->isEnabled('Slim::Plugin::DontStopTheMusic::Plugin') ) {
+		require Slim::Plugin::DontStopTheMusic::Plugin;
+		
+		registerFavoritesAsDSTMProvider();
+		
+		$prefs->setChange(sub {
+			unregisterFavoritesAsDSTMProvider();
+			registerFavoritesAsDSTMProvider();
+		}, 'registerDSTM');
+		
+		Slim::Control::Request::subscribe(\&registerFavoritesAsDSTMProvider, [['favorites'], ['changed']]);
+	}
+}
+
+sub registerFavoritesAsDSTMProvider {
+	if ( $prefs->get('registerDSTM') && (my $favsObject = Slim::Utils::Favorites->new()) ) {
+		foreach my $fav (@{$favsObject->all}) {
+			Slim::Plugin::DontStopTheMusic::Plugin->registerHandler($fav->{title}, sub {
+				$_[1]->($_[0], [$fav->{url}]);
+			});
+		}
+	}
+}
+
+sub unregisterFavoritesAsDSTMProvider {
+	if (my $favsObject = Slim::Utils::Favorites->new()) {
+		foreach my $fav (@{$favsObject->all}) {
+			Slim::Plugin::DontStopTheMusic::Plugin->unregisterHandler($fav->{title});
+		}
+	}
 }
 
 
@@ -975,7 +1017,7 @@ sub _objectInfoHandler {
 	};
 	
 	my $title;
-	if ($objectType eq 'artist') {
+	if ($objectType && $objectType eq 'artist') {
 		$title = $obj->name;
 	} else {
 		$title = $obj->title;

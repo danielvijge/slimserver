@@ -22,6 +22,8 @@ package Slim::Utils::OS::Synology;
 # This module is trying to provide customisations for all these options.
 
 use strict;
+
+use Config;
 use File::Spec::Functions qw(:ALL);
 use FindBin qw($Bin);
 
@@ -35,6 +37,7 @@ sub initDetails
 	my $class = shift;
 
 	$class->{osDetails} = $class->SUPER::initDetails();
+	$class->{osDetails}->{osArch} ||= $Config{'archname'};
 
 	$class->{osDetails}->{isDiskStation} = 1;
 
@@ -61,6 +64,13 @@ sub initDetails
 	return $class->{osDetails};
 }
 
+sub localeDetails {
+	my $lc_ctype = 'utf8';
+	my $lc_time = 'C';
+
+	return ($lc_ctype, $lc_time);
+}
+
 
 sub logRotate
 {
@@ -83,8 +93,10 @@ sub ignoredItems
             '@database'    => 1,   # databases store
             '@optware'     => 1,   # NSLU2-Linux Optware system
             'upd@te'       => 1,   # firmware update temporary directory
+            '#recycle'     => 1,
             # system paths in the fs root which will not contain any music
             'bin'          => '/',
+            'config'       => '/',
             'dev'          => '/',
             'etc'          => '/',
             'etc.defaults' => '/',
@@ -97,6 +109,7 @@ sub ignoredItems
             'opt'          => '/',
             'proc'         => '/',
             'root'         => '/',
+            'run'         => '/',
             'sbin'         => '/',
             'sys'          => '/',
             'tmp'          => '/',

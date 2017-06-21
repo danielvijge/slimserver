@@ -32,6 +32,7 @@ sub init {
 	Slim::Web::Pages->addPageFunction(qr/^home\.(?:htm|xml)/, \&home);
 	Slim::Web::Pages->addPageFunction(qr/^index\.(?:htm|xml)/, \&home);
 	Slim::Web::Pages->addPageFunction(qr/^switchserver\.(?:htm|xml)/, \&switchServer);
+	Slim::Web::Pages->addPageFunction(qr/^updateinfo\.htm/, \&updateInfo);
 	
 	Slim::Web::Pages->addPageLinks('my_apps', {'PLUGIN_APP_GALLERY_MODULE_NAME' => Slim::Networking::SqueezeNetwork->url('/appgallery') }) if !main::NOMYSB;
 
@@ -171,22 +172,22 @@ sub home {
 		if (!main::NOBROWSECACHE && $template eq 'home.html') {
 			$checksum = md5_hex(Slim::Utils::Unicode::utf8off(join(':', 
 				($client ? $client->id : ''),
-				$params->{newVersion},
-				$params->{newPlugins},
-				$params->{hasLibrary},
-				$prefs->get('langauge'),
-				$params->{library_id},
-				complex_to_query($params->{additionalLinks}),
-				complex_to_query($params->{additionalLinkOrder}),
+				$params->{newVersion} || '',
+				$params->{newPlugins} || '',
+				$params->{hasLibrary} || '',
+				$prefs->get('language'),
+				$params->{library_id} || '',
+				complex_to_query($params->{additionalLinks} || {}),
+				complex_to_query($params->{additionalLinkOrder} || {}),
 				complex_to_query($params->{cookies} || {}),
 				complex_to_query($params->{favorites} || {}),
-				$params->{'skinOverride'} || $prefs->get('skin'),
-				$template,
-				$params->{song_count},
-				$params->{album_count},
-				$params->{artist_count},
+				$params->{'skinOverride'} || $prefs->get('skin') || '',
+				$template || '',
+				$params->{song_count} || 0,
+				$params->{album_count} || 0,
+				$params->{artist_count} || 0,
 			)));
-		
+
 			if (my $cached = $cache->get($checksum)) {
 				return $cached;
 			}
@@ -197,6 +198,46 @@ sub home {
 	$cache->set($checksum, $page, 3600) if $checksum && !main::NOBROWSECACHE;
 	
 	return $page;
+}
+
+sub updateInfo {
+	my ($client, $params, $callback) = @_;
+
+	my $current = {};
+
+	my $request = Slim::Control::Request->new(undef, ['appsquery']);
+
+	$request->addParam(args => {
+		type    => 'plugin',
+		details => 1,
+		current => $current,
+	});
+	
+	$params->{pt} = {
+		request => $request,
+	};
+
+	$request->callbackParameters(\&_updateInfoCB, [ @_ ]);
+	$request->execute();
+
+	return;
+}
+
+sub _updateInfoCB {
+	my ($client, $params, $callback, $httpClient, $response) = @_;
+	
+	my $request = $params->{pt}->{request};
+	
+	$params->{'newVersion'} = $::newVersion;
+	
+	my $newPlugins = $request->getResult('updates') || {};
+	$params->{'newPlugins'} = $request && [ map { $_->{info} } grep { $_ } values %$newPlugins ];
+	
+	if ($params->{installerFile}) {
+		$params->{'newVersion'} = ${Slim::Web::HTTP::filltemplatefile('html/docs/linux-update.html', $params)};
+	}
+	
+	$callback->($client, $params, Slim::Web::HTTP::filltemplatefile('update_software.html', $params), $httpClient, $response);
 }
 
 sub switchServer {
